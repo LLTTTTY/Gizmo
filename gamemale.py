@@ -4,7 +4,7 @@ import re
 import ddddocr
 import os
 import time
-import json # 新增，用于处理localStorage数据
+import json  # 新增，用于处理localStorage数据
 
 def setup_logger(name, verbose=False):
     logger = logging.getLogger(name)
@@ -71,7 +71,8 @@ class Gamemale:
         return loginhash, formhash
 
     def verify_code(self, max_retries=10) -> str:
-        self.login_logger.info(f"看我 slay 验证码 [最多暗娼 {max_retries} 次惹]")
+        # 修正错误用词：暗娼 → 尝试
+        self.login_logger.info(f"看我 slay 验证码 [最多尝试 {max_retries} 次惹]")
         
         for attempt in range(1, max_retries + 1):
             update_url = (
@@ -170,8 +171,9 @@ class Gamemale:
 
     def sign_gamemale(self):
         self.sign_logger.info("正在签到")
+        # 修正拼写错误：fromhash → formhash
         if not self.post_formhash:
-            self.sign_logger.warning("缺少 fromhash ，无法执行签到流程")
+            self.sign_logger.warning("缺少 formhash ，无法执行签到流程")
             return
         sign_url = (
             f"https://{self.hostname}/k_misign-sign.html?"
@@ -338,6 +340,23 @@ class Gamemale:
             self.stun_logger.info(f"“一键震惊”结束，达到目标前已无更多日志，最终次数: {success_count}")
             self.stun_result = {"status": f"震惊结束，最终次数 {success_count}", "count": success_count}
 
+    # 核心修复：将run方法调整为Gamemale类的成员方法（缩进与其他方法一致）
+    def run(self):
+        self.main_logger.info("=== 全自动站街女 ===")
+        if not self.login():
+            return
+        self.sign_gamemale()
+        self.daily_exchange()
+        self.stun_blogs() # 新增调用
+        
+        self.main_logger.info("=== 今日站街成果 ===")
+        if self.sign_result:
+            self.main_logger.info(f"签到: {self.sign_result['status']}")
+        if self.exchange_result:
+            self.main_logger.info(f"抽奖: {self.exchange_result['exchange_status']}")
+        if self.stun_result: # 新增输出
+            self.main_logger.info(f"震惊: {self.stun_result['status']}")
+
 def update_local_storage_stance(count):
     """
     模拟更新 localStorage 中的 tasksData.stance 值。
@@ -359,22 +378,6 @@ def update_local_storage_stance(count):
 
     # 也可以直接打印，方便查看
     print(f"[模拟LocalStorage] 更新 stance 为: {count}")
-
-    def run(self):
-        self.main_logger.info("=== 全自动站街女 ===")
-        if not self.login():
-            return
-        self.sign_gamemale()
-        self.daily_exchange()
-        self.stun_blogs() # 新增调用
-        
-        self.main_logger.info("=== 今日站街成果 ===")
-        if self.sign_result:
-            self.main_logger.info(f"签到: {self.sign_result['status']}")
-        if self.exchange_result:
-            self.main_logger.info(f"抽奖: {self.exchange_result['exchange_status']}")
-        if self.stun_result: # 新增输出
-            self.main_logger.info(f"震惊: {self.stun_result['status']}")
 
 def main():
     username = os.getenv("USERNAME")
