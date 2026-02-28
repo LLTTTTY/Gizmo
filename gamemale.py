@@ -376,7 +376,6 @@ def update_local_storage_stance(count):
         if self.stun_result: # 新增输出
             self.main_logger.info(f"震惊: {self.stun_result['status']}")
 
-
 def main():
     username = os.getenv("USERNAME")
     password = os.getenv("PASSWORD")
