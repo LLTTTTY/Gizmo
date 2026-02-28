@@ -360,7 +360,6 @@ def update_local_storage_stance(count):
     # 也可以直接打印，方便查看
     print(f"[模拟LocalStorage] 更新 stance 为: {count}")
 
-
     def run(self):
         self.main_logger.info("=== 全自动站街女 ===")
         if not self.login():
