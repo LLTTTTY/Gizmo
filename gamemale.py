@@ -338,7 +338,6 @@ class Gamemale:
             self.stun_logger.info(f"“一键震惊”结束，达到目标前已无更多日志，最终次数: {success_count}")
             self.stun_result = {"status": f"震惊结束，最终次数 {success_count}", "count": success_count}
 
-
 def update_local_storage_stance(count):
     """
     模拟更新 localStorage 中的 tasksData.stance 值。
