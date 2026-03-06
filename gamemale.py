@@ -5,6 +5,7 @@ import ddddocr
 import os
 import time
 from urllib.parse import urljoin
+from bs4 import BeautifulSoup
 
 def setup_logger(name, verbose=False):
     logger = logging.getLogger(name)
@@ -24,7 +25,7 @@ def setup_logger(name, verbose=False):
     return logger
 
 class Gamemale:
-    def __init__(self, username, password, questionid='0', answer=None, verbose=False):
+    def __init__(self, username, password, questionid='0', answer=None, verbose=True):
         self.verbose = verbose
         self.main_logger = setup_logger('GameMale', verbose)
         self.login_logger = setup_logger('登录', verbose)
@@ -49,21 +50,25 @@ class Gamemale:
             'User-Agent': (
                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
                 'AppleWebKit/537.36 (KHTML, like Gecko) '
-                'Chrome/91.0.4472.124 Safari/537.36'
-            )
+                'Chrome/120.0.0.0 Safari/537.36'
+            ),
+            'Referer': f"https://{self.hostname}/",
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Connection': 'keep-alive'
         })
 
     def get_login_formhash(self):
         url = f"https://{self.hostname}/member.php?mod=logging&action=login"
         self.login_logger.debug(f"登录页url: {url}")
         text = self.session.get(url).text
-        loginhash_match = re.search(r'<div id="main_messaqge_(.+?)">', text)
+        loginhash_match = re.search(r'<div id="main_message_(.+?)">', text)
         formhash_match = re.search(
             r'<input type="hidden" name="formhash" value="(.+?)" />',
             text
         )
         if not loginhash_match or not formhash_match:
-            self.login_logger.debug(f"登录页:\n{text}")
+            self.login_logger.debug(f"登录页:\n{text[:500]}...")
             raise ValueError("无法获取 loginhash 或 formhash")
         loginhash = loginhash_match.group(1)
         formhash = formhash_match.group(1)
@@ -71,32 +76,32 @@ class Gamemale:
         return loginhash, formhash
 
     def verify_code(self, max_retries=10) -> str:
-        self.login_logger.info(f"看我 slay 验证码 [最多暗娼 {max_retries} 次惹]")
+        self.login_logger.info(f"开始识别验证码 [最多重试 {max_retries} 次]")
         
         for attempt in range(1, max_retries + 1):
             update_url = (
                 f"https://{self.hostname}/misc.php?mod=seccode&action=update"
-                f"&idhash=cSA&0.1234567&modid=member::logging"
+                f"&idhash=cSA&{time.time()}&modid=member::logging"
             )
-            self.login_logger.debug(f"正在从 {update_url} 获取请求验证码的必要参数")
+            self.login_logger.debug(f"获取验证码参数: {update_url}")
             update_text = self.session.get(update_url).text
             update_match = re.search(r"update=(.+?)&idhash=", update_text)
             if not update_match:
-                self.login_logger.debug(f"返回响应:\n{update_text}")
+                self.login_logger.debug(f"验证码参数响应: {update_text}")
                 continue
             update_val = update_match.group(1)
             code_url = (
                 f"https://{self.hostname}/misc.php?mod=seccode&update="
                 f"{update_val}&idhash=cSA"
             )
-            self.login_logger.debug(f"正在从 {code_url} 获取验证码")
+            self.login_logger.debug(f"获取验证码图片: {code_url}")
             headers = {
                 'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
                 'Referer': f"https://{self.hostname}/member.php?mod=logging&action=login",
             }
             code_resp = self.session.get(code_url, headers=headers)
             if not code_resp.content:
-                self.login_logger.debug(f"返回响应:\n{code_resp}")
+                self.login_logger.debug(f"验证码图片为空")
                 continue
                 
             code = self.ocr.classification(code_resp.content)
@@ -105,18 +110,18 @@ class Gamemale:
                 f"https://{self.hostname}/misc.php?mod=seccode&action=check&inajax=1&"
                 f"modid=member::logging&idhash=cSA&secverify={code}"
             )
-            self.login_logger.debug(f"正在向 {verify_url} 提交识别的验证码")
+            self.login_logger.debug(f"验证验证码: {verify_url}")
             res = self.session.get(verify_url).text
             if "succeed" in res:
-                self.login_logger.info(f"识别成功: {code} (第{attempt}次)")
+                self.login_logger.info(f"验证码识别成功: {code} (第{attempt}次)")
                 return code
             else:
-                self.login_logger.warning(f"错误的识别结果: {code} (第{attempt}次)")
+                self.login_logger.warning(f"验证码识别失败: {code} (第{attempt}次)")
         self.login_logger.error("超出最大重试次数，验证码识别失败")
         return ""
 
     def login(self) -> bool:
-        self.login_logger.info(f"开始登录噜")
+        self.login_logger.info(f"开始登录")
         
         code = self.verify_code()
         if not code:
@@ -130,7 +135,7 @@ class Gamemale:
         form_data = {
             'formhash': formhash,
             'referer': f"https://{self.hostname}/",
-            'loginfield': self.username,
+            'loginfield': 'username',
             'username': self.username,
             'password': self.password,
             'questionid': self.questionid,
@@ -141,12 +146,21 @@ class Gamemale:
             'seccodeverify': code,
         }
         
-        self.login_logger.debug(f"正在向 {login_url} 提交登录表单")
+        self.login_logger.debug(f"提交登录表单: {login_url}")
         resp_text = self.session.post(login_url, data=form_data).text
         if "succeed" in resp_text:
             self.login_logger.info("登录成功")
             
-            self.login_logger.debug(f"尝试访问论坛主页，以获取签到所需的 formhash")
+            # 验证登录状态
+            test_url = f"https://{self.hostname}/home.php?mod=space"
+            test_resp = self.session.get(test_url)
+            if self.username in test_resp.text:
+                self.login_logger.debug("验证登录状态：已成功登录")
+            else:
+                self.login_logger.warning("登录响应显示成功，但实际未登录")
+                return False
+            
+            self.login_logger.debug(f"获取签到所需的 formhash")
             forum_url = f"https://{self.hostname}/forum.php"
             try:
                 text = self.session.get(forum_url).text
@@ -165,13 +179,13 @@ class Gamemale:
             return True
         else:
             self.login_logger.error("登录失败")
-            self.login_logger.debug(f"原始响应:\n{resp_text}")
+            self.login_logger.debug(f"登录响应:\n{resp_text[:500]}...")
             return False
 
     def sign_gamemale(self):
         self.sign_logger.info("正在签到")
         if not self.post_formhash:
-            self.sign_logger.warning("缺少 fromhash ，无法执行签到流程")
+            self.sign_logger.warning("缺少 formhash ，无法执行签到流程")
             return
         sign_url = (
             f"https://{self.hostname}/k_misign-sign.html?"
@@ -190,23 +204,23 @@ class Gamemale:
                     message = response_text
             else:
                 message = response_text
-            self.sign_logger.debug(f"签到响应原始内容: {message}")
+            self.sign_logger.debug(f"签到响应: {message}")
             if "签到成功" in message:
-                sign_status = "签到成功，吸吸"
+                sign_status = "签到成功"
             elif "已签" in message:
-                sign_status = "今日已签，可人"
+                sign_status = "今日已签"
             else:
-                sign_status = "天啦噜，是未知状态"
+                sign_status = f"未知状态: {message[:100]}"
             self.sign_result = {
                 "site": "GameMale",
                 "status": sign_status
             }
-            self.sign_logger.info(f"结果: {sign_status}")
+            self.sign_logger.info(f"签到结果: {sign_status}")
         except Exception as e:
             self.sign_logger.error(f"签到失败: {e}")
             self.sign_result = {
                 "site": "GameMale",
-                "status": "天啦噜，请求失败"
+                "status": f"签到请求失败: {str(e)}"
             }
 
     def daily_exchange(self):
@@ -229,117 +243,145 @@ class Gamemale:
             self.exchange_logger.debug(f"发送抽奖请求: {exchange_url}")
             response = self.session.get(exchange_url, headers=headers)
             res_json = response.json()
-            self.exchange_logger.debug(f"抽奖响应内容: {res_json}")
+            self.exchange_logger.debug(f"抽奖响应: {res_json}")
             
             if res_json.get("tipname") == "":
-                exchange_status = "没有结果、可能今天已经抽过了"
+                exchange_status = "今日已抽奖"
             elif res_json.get("tipname") == "ok":
-                exchange_status = f"成功，吸吸:\n{res_json.get('tipvalue')}"
+                exchange_status = f"抽奖成功: {res_json.get('tipvalue')}"
             else:
-                exchange_status = f"你好像进入了一个温暖潮湿的地方:\n{res_json}"
+                exchange_status = f"抽奖异常: {res_json}"
                 
             self.exchange_result = {
                 "site": "GameMale",
                 "exchange_status": exchange_status
             }
-            self.exchange_logger.info(f"结果: {exchange_status}")
+            self.exchange_logger.info(f"抽奖结果: {exchange_status}")
         except Exception as e:
             self.exchange_logger.error(f"卡片抽奖失败: {e}")
             self.exchange_result = {
                 "site": "GameMale",
-                "exchange_status": "天啦噜，抽奖请求失败"
+                "exchange_status": f"抽奖请求失败: {str(e)}"
             }
 
     def shock_operation(self):
-        """一键震惊功能实现"""
+        """一键震惊（适配ajaxmenus表情菜单）"""
         self.shock_logger.info("开始执行一键震惊操作")
         shock_count = 0
         page = 1
-        stop_processing = False
-        
-        # 目标是完成10次震惊操作
-        while shock_count < 10 and not stop_processing:
+        max_pages = 5
+        target_count = 10
+
+        while shock_count < target_count and page <= max_pages:
             try:
                 # 访问博客列表页
                 blog_url = (
                     f"https://{self.hostname}/home.php?mod=space&do=blog"
                     f"&view=all&catid=14&page={page}"
                 )
-                self.shock_logger.debug(f"访问博客列表页: {blog_url}")
-                resp = self.session.get(blog_url)
-                if resp.status_code != 200:
-                    self.shock_logger.error(f"访问博客列表页失败，状态码: {resp.status_code}")
-                    break
+                self.shock_logger.info(f"访问博客列表页 [{page}/{max_pages}]: {blog_url}")
+                resp = self.session.get(blog_url, timeout=10)
                 
-                # 提取博客链接
-                blog_links = re.findall(r'<dt class="xs2"><a href="(.*?)"', resp.text)
-                if not blog_links:
-                    self.shock_logger.warning(f"第{page}页未找到博客链接，尝试下一页")
+                if resp.status_code != 200:
+                    self.shock_logger.error(f"访问失败，状态码: {resp.status_code}")
                     page += 1
                     continue
+
+                # 提取博客链接
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                blog_links = []
+                all_a_tags = soup.find_all('a', href=True)
+                for a in all_a_tags:
+                    if 'blog.php?tid=' in a['href'] and a['href'] not in blog_links:
+                        blog_links.append(a['href'])
                 
-                self.shock_logger.debug(f"第{page}页找到 {len(blog_links)} 个博客链接")
+                blog_links = list(set(blog_links))
+                self.shock_logger.info(f"第{page}页找到 {len(blog_links)} 个有效博客链接")
                 
-                # 遍历每个博客链接
+                if not blog_links:
+                    self.shock_logger.warning(f"第{page}页未找到博客链接")
+                    page += 1
+                    continue
+
+                # 遍历博客链接
                 for link in blog_links:
-                    if shock_count >= 10:
-                        stop_processing = True
+                    if shock_count >= target_count:
                         break
-                        
+
                     try:
-                        # 拼接完整URL
-                        full_link = urljoin(f"https://{self.hostname}", link)
-                        self.shock_logger.debug(f"访问博客详情页: {full_link}")
-                        blog_resp = self.session.get(full_link)
+                        # 访问博客详情页
+                        blog_detail_url = urljoin(f"https://{self.hostname}", link)
+                        self.shock_logger.debug(f"访问博客: {blog_detail_url}")
+                        blog_resp = self.session.get(blog_detail_url, timeout=10)
                         
-                        # 查找震惊按钮链接
-                        shock_button_match = re.search(r'<td><a href="(.*?)"', blog_resp.text)
-                        if not shock_button_match:
-                            self.shock_logger.debug(f"未在博客 {full_link} 找到震惊按钮")
+                        if blog_resp.status_code != 200:
+                            self.shock_logger.debug("博客访问失败，跳过")
                             continue
-                            
-                        shock_button_url = urljoin(f"https://{self.hostname}", shock_button_match.group(1))
-                        self.shock_logger.debug(f"点击震惊按钮: {shock_button_url}")
+
+                        # 第一步：找到ajaxmenus表情菜单链接
+                        menu_match = re.search(r'href="([^"]*ajaxmenus[^"]*type=attitude[^"]*)"', blog_resp.text)
+                        if not menu_match:
+                            self.shock_logger.debug("未找到表情菜单链接，跳过")
+                            continue
                         
-                        # 执行震惊操作
-                        shock_resp = self.session.get(shock_button_url)
+                        menu_url = urljoin(f"https://{self.hostname}", menu_match.group(1))
+                        # 添加formhash参数
+                        if self.post_formhash and 'formhash=' not in menu_url:
+                            menu_url += f"&formhash={self.post_formhash}"
                         
-                        # 检查是否有 messagetext（有则说明未成功震惊）
-                        if "messagetext" not in shock_resp.text:
+                        self.shock_logger.debug(f"请求表情菜单: {menu_url}")
+                        menu_resp = self.session.get(menu_url, timeout=10)
+
+                        # 第二步：从菜单中找到"震惊"表情的提交链接
+                        shock_match = re.search(r'href="([^"]*handlekey=shock[^"]*)"', menu_resp.text)
+                        if not shock_match:
+                            self.shock_logger.debug("未找到震惊表情链接，跳过")
+                            continue
+                        
+                        shock_url = urljoin(f"https://{self.hostname}", shock_match.group(1))
+                        # 添加formhash参数
+                        if self.post_formhash and 'formhash=' not in shock_url:
+                            shock_url += f"&formhash={self.post_formhash}"
+
+                        # 第三步：执行震惊操作
+                        self.shock_logger.debug(f"执行震惊操作: {shock_url}")
+                        shock_resp = self.session.get(shock_url, timeout=10)
+
+                        # 验证是否成功
+                        if "succeed" in shock_resp.text or "messagetext" not in shock_resp.text:
                             shock_count += 1
-                            self.shock_logger.info(f"成功震惊 {shock_count}/10 次")
-                            # 避免操作过快，添加短暂延迟
-                            time.sleep(0.5)
+                            self.shock_logger.info(f"成功震惊 {shock_count}/{target_count} 次")
+                            # 延迟避免风控
+                            time.sleep(1.5)
                         else:
-                            self.shock_logger.debug(f"博客 {full_link} 已震惊过")
-                            
+                            self.shock_logger.debug("该博客已震惊过或操作失败")
+
                     except Exception as e:
-                        self.shock_logger.warning(f"处理博客链接失败: {e}")
+                        self.shock_logger.warning(f"处理博客失败: {str(e)[:80]}")
                         continue
-                
-                page += 1
-                
+
             except Exception as e:
-                self.shock_logger.error(f"处理第{page}页失败: {e}")
-                break
-        
-        # 设置结果
-        if shock_count >= 10:
+                self.shock_logger.error(f"处理第{page}页失败: {str(e)}")
+            
+            page += 1
+
+        # 设置最终结果
+        if shock_count >= target_count:
             self.shock_result = {
                 "site": "GameMale",
-                "status": f"震惊完成，共震惊 {shock_count} 次，血液+10"
+                "status": f"震惊完成，共成功 {shock_count} 次"
             }
-            self.shock_logger.info(self.shock_result["status"])
         else:
             self.shock_result = {
                 "site": "GameMale",
-                "status": f"震惊未完成，仅成功 {shock_count} 次"
+                "status": f"震惊未完成，仅成功 {shock_count} 次（目标{target_count}次）"
             }
-            self.shock_logger.warning(self.shock_result["status"])
+        self.shock_logger.info(self.shock_result["status"])
 
     def run(self):
-        self.main_logger.info("=== 全自动站街女 ===")
+        self.main_logger.info("=== 全自动操作开始 ===")
         if not self.login():
+            self.main_logger.error("登录失败，终止操作")
             return
         
         # 执行签到
@@ -351,8 +393,8 @@ class Gamemale:
         # 执行一键震惊
         self.shock_operation()
         
-        # 输出结果
-        self.main_logger.info("=== 今日站街成果 ===")
+        # 输出最终结果
+        self.main_logger.info("=== 今日操作成果 ===")
         if self.sign_result:
             self.main_logger.info(f"签到: {self.sign_result['status']}")
         if self.exchange_result:
@@ -367,11 +409,13 @@ def main():
     
     if not username or not password:
         logger = setup_logger("GameMale")
-        logger.error("天啦噜，信息不全就想登录？")
+        logger.error("请先设置环境变量：")
+        logger.error("Windows: set GAMEMALE_USERNAME=你的账号 && set GAMEMALE_PASSWORD=你的密码")
+        logger.error("Linux/Mac: export GAMEMALE_USERNAME=你的账号 && export GAMEMALE_PASSWORD=你的密码")
         exit(1)
     
     # 初始化并运行
-    gm = Gamemale(username, password, verbose=False)
+    gm = Gamemale(username, password, verbose=True)
     gm.run()
 
 if __name__ == "__main__":
