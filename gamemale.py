@@ -4,7 +4,7 @@ import re
 import ddddocr
 import os
 import time
-import json  # 新增，用于处理localStorage数据
+from urllib.parse import urljoin
 
 def setup_logger(name, verbose=False):
     logger = logging.getLogger(name)
@@ -30,7 +30,7 @@ class Gamemale:
         self.login_logger = setup_logger('登录', verbose)
         self.sign_logger = setup_logger('签到', verbose)
         self.exchange_logger = setup_logger('抽奖', verbose)
-        self.stun_logger = setup_logger('震惊', verbose) # 新增logger
+        self.shock_logger = setup_logger('震惊', verbose)
         
         self.login_logger.debug(f"当前用户: {username}")
         
@@ -38,7 +38,7 @@ class Gamemale:
         self.post_formhash = None
         self.sign_result = None
         self.exchange_result = None
-        self.stun_result = None # 新增result
+        self.shock_result = None
         self.username = str(username)
         self.password = str(password)
         self.questionid = questionid
@@ -71,8 +71,7 @@ class Gamemale:
         return loginhash, formhash
 
     def verify_code(self, max_retries=10) -> str:
-        # 修正错误用词：暗娼 → 尝试
-        self.login_logger.info(f"看我 slay 验证码 [最多尝试 {max_retries} 次惹]")
+        self.login_logger.info(f"看我 slay 验证码 [最多暗娼 {max_retries} 次惹]")
         
         for attempt in range(1, max_retries + 1):
             update_url = (
@@ -171,9 +170,8 @@ class Gamemale:
 
     def sign_gamemale(self):
         self.sign_logger.info("正在签到")
-        # 修正拼写错误：fromhash → formhash
         if not self.post_formhash:
-            self.sign_logger.warning("缺少 formhash ，无法执行签到流程")
+            self.sign_logger.warning("缺少 fromhash ，无法执行签到流程")
             return
         sign_url = (
             f"https://{self.hostname}/k_misign-sign.html?"
@@ -252,143 +250,127 @@ class Gamemale:
                 "exchange_status": "天啦噜，抽奖请求失败"
             }
 
-    def stun_blogs(self, target_count=10):
-        """
-        执行“一键震惊”操作。
-        :param target_count: 目标震惊次数，默认为10。
-        """
-        self.stun_logger.info(f"开始执行“一键震惊”，目标次数: {target_count}")
+    def shock_operation(self):
+        """一键震惊功能实现"""
+        self.shock_logger.info("开始执行一键震惊操作")
+        shock_count = 0
+        page = 1
+        stop_processing = False
         
-        current_page = 1
-        success_count = 0
-        processed_log_count = 0
-        base_blog_url = f"https://{self.hostname}/home.php?mod=space&do=blog&view=all&catid=14&page="
-
-        while success_count < target_count:
-            self.stun_logger.debug(f"正在获取第 {current_page} 页日志列表...")
-            page_url = base_blog_url + str(current_page)
+        # 目标是完成10次震惊操作
+        while shock_count < 10 and not stop_processing:
             try:
-                page_response = self.session.get(page_url)
-                if page_response.status_code != 200:
-                    self.stun_logger.warning(f"获取第 {current_page} 页失败，状态码: {page_response.status_code}")
-                    current_page += 1
-                    continue
-                page_content = page_response.text
-            except Exception as e:
-                self.stun_logger.error(f"请求第 {current_page} 页时发生错误: {e}")
-                break
-
-            # 解析页面，找出所有日志链接
-            blog_links = re.findall(r'<dt class="xs2">\s*<a href="([^"]+)"[^>]*>', page_content)
-            if not blog_links:
-                self.stun_logger.info(f"第 {current_page} 页没有找到更多日志，停止处理。")
-                break
-
-            self.stun_logger.debug(f"第 {current_page} 页找到 {len(blog_links)} 个日志链接。")
-
-            for link in blog_links:
-                if success_count >= target_count:
+                # 访问博客列表页
+                blog_url = (
+                    f"https://{self.hostname}/home.php?mod=space&do=blog"
+                    f"&view=all&catid=14&page={page}"
+                )
+                self.shock_logger.debug(f"访问博客列表页: {blog_url}")
+                resp = self.session.get(blog_url)
+                if resp.status_code != 200:
+                    self.shock_logger.error(f"访问博客列表页失败，状态码: {resp.status_code}")
                     break
-
-                full_link = link if link.startswith('http') else f"https://{self.hostname}/{link.lstrip('/')}"
-                self.stun_logger.debug(f"正在访问日志: {full_link}")
-
-                try:
-                    # 访问日志详情页
-                    blog_response = self.session.get(full_link)
-                    blog_content = blog_response.text
-                    
-                    # 查找是否有可点击的按钮（模拟原脚本中的 .atd tbody tr td a）
-                    button_match = re.search(r'<a[^>]*class="[^"]*atd[^"]*"[^>]*href="([^"]+)"', blog_content, re.IGNORECASE)
-                    if button_match:
-                        button_url = button_match.group(1)
-                        full_button_url = button_url if button_url.startswith('http') else f"https://{self.hostname}/{button_url.lstrip('/')}"
-                        
-                        self.stun_logger.debug(f"找到操作按钮，正在访问: {full_button_url}")
-                        button_response = self.session.get(full_button_url)
-                        final_content = button_response.text
-                    else:
-                        final_content = blog_content
-
-                    # 判断是否成功增加次数
-                    if '"messagetext"' in final_content or 'id="messagetext"' in final_content:
-                        # 找到了提示元素，说明此操作未计入次数
-                        processed_log_count += 1
-                        self.stun_logger.debug(f"日志访问完成，未增加次数。累计访问: {processed_log_count}")
-                    else:
-                        # 没有找到提示元素，认为操作成功
-                        success_count += 1
-                        processed_log_count += 1
-                        self.stun_logger.info(f"震惊成功！当前次数: {success_count} / {target_count}")
-                        
-                        # 更新本地存储数据 (模拟原脚本行为)
-                        update_local_storage_stance(success_count)
-
-                        # 为避免过于频繁，稍作延时
-                        time.sleep(0.5)
-
-                except Exception as e:
-                    self.stun_logger.error(f"访问日志 {full_link} 时发生错误: {e}")
+                
+                # 提取博客链接
+                blog_links = re.findall(r'<dt class="xs2"><a href="(.*?)"', resp.text)
+                if not blog_links:
+                    self.shock_logger.warning(f"第{page}页未找到博客链接，尝试下一页")
+                    page += 1
                     continue
-            
-            current_page += 1
+                
+                self.shock_logger.debug(f"第{page}页找到 {len(blog_links)} 个博客链接")
+                
+                # 遍历每个博客链接
+                for link in blog_links:
+                    if shock_count >= 10:
+                        stop_processing = True
+                        break
+                        
+                    try:
+                        # 拼接完整URL
+                        full_link = urljoin(f"https://{self.hostname}", link)
+                        self.shock_logger.debug(f"访问博客详情页: {full_link}")
+                        blog_resp = self.session.get(full_link)
+                        
+                        # 查找震惊按钮链接
+                        shock_button_match = re.search(r'<td><a href="(.*?)"', blog_resp.text)
+                        if not shock_button_match:
+                            self.shock_logger.debug(f"未在博客 {full_link} 找到震惊按钮")
+                            continue
+                            
+                        shock_button_url = urljoin(f"https://{self.hostname}", shock_button_match.group(1))
+                        self.shock_logger.debug(f"点击震惊按钮: {shock_button_url}")
+                        
+                        # 执行震惊操作
+                        shock_resp = self.session.get(shock_button_url)
+                        
+                        # 检查是否有 messagetext（有则说明未成功震惊）
+                        if "messagetext" not in shock_resp.text:
+                            shock_count += 1
+                            self.shock_logger.info(f"成功震惊 {shock_count}/10 次")
+                            # 避免操作过快，添加短暂延迟
+                            time.sleep(0.5)
+                        else:
+                            self.shock_logger.debug(f"博客 {full_link} 已震惊过")
+                            
+                    except Exception as e:
+                        self.shock_logger.warning(f"处理博客链接失败: {e}")
+                        continue
+                
+                page += 1
+                
+            except Exception as e:
+                self.shock_logger.error(f"处理第{page}页失败: {e}")
+                break
         
-        if success_count >= target_count:
-            self.stun_logger.info(f"“一键震惊”已完成，成功次数: {success_count}")
-            self.stun_result = {"status": f"震惊成功 {success_count} 次", "count": success_count}
+        # 设置结果
+        if shock_count >= 10:
+            self.shock_result = {
+                "site": "GameMale",
+                "status": f"震惊完成，共震惊 {shock_count} 次，血液+10"
+            }
+            self.shock_logger.info(self.shock_result["status"])
         else:
-            self.stun_logger.info(f"“一键震惊”结束，达到目标前已无更多日志，最终次数: {success_count}")
-            self.stun_result = {"status": f"震惊结束，最终次数 {success_count}", "count": success_count}
+            self.shock_result = {
+                "site": "GameMale",
+                "status": f"震惊未完成，仅成功 {shock_count} 次"
+            }
+            self.shock_logger.warning(self.shock_result["status"])
 
-    # 核心修复：将run方法调整为Gamemale类的成员方法（缩进与其他方法一致）
     def run(self):
         self.main_logger.info("=== 全自动站街女 ===")
         if not self.login():
             return
-        self.sign_gamemale()
-        self.daily_exchange()
-        self.stun_blogs() # 新增调用
         
+        # 执行签到
+        self.sign_gamemale()
+        
+        # 执行抽奖
+        self.daily_exchange()
+        
+        # 执行一键震惊
+        self.shock_operation()
+        
+        # 输出结果
         self.main_logger.info("=== 今日站街成果 ===")
         if self.sign_result:
             self.main_logger.info(f"签到: {self.sign_result['status']}")
         if self.exchange_result:
             self.main_logger.info(f"抽奖: {self.exchange_result['exchange_status']}")
-        if self.stun_result: # 新增输出
-            self.main_logger.info(f"震惊: {self.stun_result['status']}")
-
-def update_local_storage_stance(count):
-    """
-    模拟更新 localStorage 中的 tasksData.stance 值。
-    此函数可以根据您的具体需求来决定如何“保存”这个数据，
-    例如写入一个文件或打印出来。
-    """
-    # 示例：将数据写入一个临时文件
-    tasks_data = {}
-    try:
-        with open('gamemale_tasks_data.json', 'r', encoding='utf-8') as f:
-            tasks_data = json.load(f)
-    except FileNotFoundError:
-        pass
-    
-    tasks_data['stance'] = count
-    
-    with open('gamemale_tasks_data.json', 'w', encoding='utf-8') as f:
-        json.dump(tasks_data, f, ensure_ascii=False, indent=2)
-
-    # 也可以直接打印，方便查看
-    print(f"[模拟LocalStorage] 更新 stance 为: {count}")
+        if self.shock_result:
+            self.main_logger.info(f"震惊: {self.shock_result['status']}")
 
 def main():
-    username = os.getenv("USERNAME")
-    password = os.getenv("PASSWORD")
-    # questionid = os.getenv("QID")
-    # answer = os.getenv("ANSWER")
+    # 从环境变量获取账号密码
+    username = os.getenv("GAMEMALE_USERNAME") or os.getenv("USERNAME")
+    password = os.getenv("GAMEMALE_PASSWORD") or os.getenv("PASSWORD")
     
     if not username or not password:
         logger = setup_logger("GameMale")
         logger.error("天啦噜，信息不全就想登录？")
         exit(1)
+    
+    # 初始化并运行
     gm = Gamemale(username, password, verbose=False)
     gm.run()
 
