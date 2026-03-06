@@ -58,33 +58,27 @@ class Gamemale:
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1'
         })
-        # 禁用重定向跟踪，便于调试
         self.session.max_redirects = 10
 
     def get_login_formhash(self):
-        """修复版：多规则匹配loginhash和formhash"""
+        """多规则匹配loginhash和formhash"""
         url = f"https://{self.hostname}/member.php?mod=logging&action=login"
         self.login_logger.debug(f"登录页url: {url}")
         
-        # 多次尝试获取登录页
         for attempt in range(3):
             try:
                 resp = self.session.get(url, timeout=15)
                 resp.encoding = 'utf-8'
                 text = resp.text
-                self.login_logger.debug(f"登录页响应状态码: {resp.status_code}")
                 
                 # 保存登录页源码（调试用）
                 with open("login_page.html", "w", encoding="utf-8") as f:
-                    f.write(text[:2000])  # 只保存前2000字符
+                    f.write(text[:2000])
                 
-                # ===== 修复：多规则匹配loginhash =====
+                # 匹配loginhash（多规则）
                 loginhash = None
-                # 规则1: 原规则（修复拼写错误）
                 match1 = re.search(r'<div id="main_message_(.+?)">', text)
-                # 规则2: 匹配loginhash的其他位置
                 match2 = re.search(r'loginhash=([a-f0-9]+)', text)
-                # 规则3: 从表单action中提取
                 match3 = re.search(r'action="[^"]*loginhash=([a-f0-9]+)"', text)
                 
                 if match1:
@@ -94,13 +88,11 @@ class Gamemale:
                 elif match3:
                     loginhash = match3.group(1)
                 
-                # ===== 修复：多规则匹配formhash =====
+                # 匹配formhash（多规则）
                 formhash = None
-                # 规则1: 原规则
                 match1 = re.search(r'<input type="hidden" name="formhash" value="(.+?)" />', text)
-                # 规则2: 匹配所有formhash输入框（忽略空格）
                 match2 = re.search(r'<input\s+name="formhash"\s+type="hidden"\s+value="([^"]+)"', text, re.IGNORECASE)
-                # 规则3: 使用BeautifulSoup查找
+                
                 if not match1 and not match2:
                     soup = BeautifulSoup(text, 'html.parser')
                     formhash_input = soup.find('input', {'name': 'formhash', 'type': 'hidden'})
@@ -112,7 +104,6 @@ class Gamemale:
                 elif match2:
                     formhash = match2.group(1)
                 
-                # 验证是否获取成功
                 if loginhash and formhash:
                     self.login_logger.debug(f"成功获取 - loginhash:'{loginhash}'，formhash:'{formhash}'")
                     return loginhash, formhash
@@ -124,7 +115,7 @@ class Gamemale:
                 self.login_logger.error(f"获取登录参数失败（第{attempt+1}次）: {e}")
                 time.sleep(1)
         
-        # 如果都失败，尝试从主页获取formhash
+        # 备用方案
         self.login_logger.debug("尝试从主页获取formhash...")
         try:
             index_resp = self.session.get(f"https://{self.hostname}/", timeout=10)
@@ -132,14 +123,12 @@ class Gamemale:
             formhash_input = soup.find('input', {'name': 'formhash', 'type': 'hidden'})
             if formhash_input:
                 formhash = formhash_input.get('value')
-                # 生成一个默认的loginhash（部分网站可通用）
-                loginhash = 'a1b2c3d4'  # 占位值
+                loginhash = 'a1b2c3d4'
                 self.login_logger.warning(f"使用备用方案 - loginhash:'{loginhash}'，formhash:'{formhash}'")
                 return loginhash, formhash
         except:
             pass
         
-        self.login_logger.error("所有获取方式都失败！")
         raise ValueError("无法获取 loginhash 或 formhash")
 
     def verify_code(self, max_retries=10) -> str:
@@ -151,11 +140,9 @@ class Gamemale:
                     f"https://{self.hostname}/misc.php?mod=seccode&action=update"
                     f"&idhash=cSA&{time.time()}&modid=member::logging"
                 )
-                self.login_logger.debug(f"获取验证码参数: {update_url}")
                 update_text = self.session.get(update_url, timeout=10).text
                 update_match = re.search(r"update=(.+?)&idhash=", update_text)
                 if not update_match:
-                    self.login_logger.debug(f"验证码参数响应: {update_text[:100]}")
                     continue
                 
                 update_val = update_match.group(1)
@@ -163,14 +150,12 @@ class Gamemale:
                     f"https://{self.hostname}/misc.php?mod=seccode&update="
                     f"{update_val}&idhash=cSA"
                 )
-                self.login_logger.debug(f"获取验证码图片: {code_url}")
                 headers = {
                     'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
                     'Referer': f"https://{self.hostname}/member.php?mod=logging&action=login",
                 }
                 code_resp = self.session.get(code_url, headers=headers, timeout=10)
                 if not code_resp.content:
-                    self.login_logger.debug(f"验证码图片为空")
                     continue
                     
                 code = self.ocr.classification(code_resp.content)
@@ -179,7 +164,6 @@ class Gamemale:
                     f"https://{self.hostname}/misc.php?mod=seccode&action=check&inajax=1&"
                     f"modid=member::logging&idhash=cSA&secverify={code}"
                 )
-                self.login_logger.debug(f"验证验证码: {verify_url}")
                 res = self.session.get(verify_url, timeout=10).text
                 if "succeed" in res:
                     self.login_logger.info(f"验证码识别成功: {code} (第{attempt}次)")
@@ -196,20 +180,17 @@ class Gamemale:
     def login(self) -> bool:
         self.login_logger.info(f"开始登录流程")
         
-        # 先获取验证码（避免获取formhash后验证码过期）
         code = self.verify_code()
         if not code:
             self.login_logger.error("缺少验证码，无法执行登录流程")
             return False
         
-        # 获取登录参数
         try:
             loginhash, formhash = self.get_login_formhash()
         except Exception as e:
             self.login_logger.error(f"获取登录参数失败: {e}")
             return False
         
-        # 构造登录请求
         login_url = (
             f"https://{self.hostname}/member.php?mod=logging&action=login"
             f"&loginsubmit=yes&loginhash={loginhash}&inajax=1"
@@ -228,20 +209,15 @@ class Gamemale:
             'seccodeverify': code,
         }
         
-        self.login_logger.debug(f"提交登录表单到: {login_url}")
         try:
-            # 关闭重定向，手动处理
             resp = self.session.post(login_url, data=form_data, timeout=15, allow_redirects=False)
             resp.encoding = 'utf-8'
             resp_text = resp.text
-            self.login_logger.debug(f"登录响应状态码: {resp.status_code}")
-            self.login_logger.debug(f"登录响应内容: {resp_text[:300]}")
             
-            # 多条件判断登录成功
             success_conditions = [
                 "succeed" in resp_text,
                 "登录成功" in resp_text,
-                resp.status_code == 302  # 重定向表示成功
+                resp.status_code == 302
             ]
             
             if any(success_conditions):
@@ -253,12 +229,10 @@ class Gamemale:
                     test_resp = self.session.get(test_url, timeout=10)
                     if self.username in test_resp.text:
                         self.login_logger.debug("登录状态验证通过")
-                    else:
-                        self.login_logger.warning("登录响应显示成功，但个人中心未找到用户名")
                 except Exception as e:
                     self.login_logger.error(f"验证登录状态出错: {e}")
                 
-                # 获取formhash（用于后续操作）
+                # 获取formhash
                 try:
                     forum_url = f"https://{self.hostname}/forum.php"
                     text = self.session.get(forum_url, timeout=10).text
@@ -275,7 +249,7 @@ class Gamemale:
                 return True
             else:
                 self.login_logger.error("登录失败！")
-                self.login_logger.debug(f"登录失败响应: {resp_text}")
+                self.login_logger.debug(f"登录失败响应: {resp_text[:300]}")
                 return False
                 
         except Exception as e:
@@ -294,20 +268,16 @@ class Gamemale:
             f"operation=qiandao&format=button&formhash={self.post_formhash}"
         )
         try:
-            self.sign_logger.debug(f"签到请求URL: {sign_url}")
             resp = self.session.get(sign_url, timeout=10)
             resp.encoding = 'utf-8'
             response_text = resp.text
             
-            # 解析签到响应
             message = response_text
             if response_text.startswith("<?xml"):
                 cdata_start = response_text.find("<![CDATA[") + 9
                 cdata_end = response_text.find("]]>")
                 if cdata_start > 8 and cdata_end > cdata_start:
                     message = response_text[cdata_start:cdata_end]
-            
-            self.sign_logger.debug(f"签到响应: {message[:200]}")
             
             if "签到成功" in message:
                 sign_status = "签到成功"
@@ -349,10 +319,8 @@ class Gamemale:
             'x-requested-with': 'XMLHttpRequest',
         }
         try:
-            self.exchange_logger.debug(f"抽奖请求URL: {exchange_url}")
             response = self.session.get(exchange_url, headers=headers, timeout=10)
             res_json = response.json()
-            self.exchange_logger.debug(f"抽奖响应: {res_json}")
             
             if res_json.get("tipname") == "":
                 exchange_status = "今日已抽奖"
@@ -375,7 +343,7 @@ class Gamemale:
             }
 
     def shock_operation(self):
-        """一键震惊（适配ajaxmenus表情菜单）"""
+        """一键震惊（精准匹配博客链接）"""
         self.shock_logger.info("开始执行一键震惊操作")
         if not self.post_formhash:
             self.shock_logger.warning("缺少formhash，震惊操作无法执行")
@@ -402,15 +370,27 @@ class Gamemale:
                     page += 1
                     continue
 
-                # 提取博客链接
+                # 解析页面 - 精准匹配博客链接
                 soup = BeautifulSoup(resp.text, 'html.parser')
                 blog_links = []
-                all_a_tags = soup.find_all('a', href=True)
-                for a in all_a_tags:
-                    href = a.get('href', '')
-                    if 'blog.php?tid=' in href and href not in blog_links:
-                        blog_links.append(href)
+
+                # 核心匹配规则：dl.bbd_la 下的 dd 中的 a 标签，且链接是 blog-xxx-xxx.html 格式
+                dl_tags = soup.find_all('dl', class_='bbd_la')
+                self.shock_logger.debug(f"找到 {len(dl_tags)} 个 dl.bbd_la 标签")
                 
+                for dl in dl_tags:
+                    dd_tags = dl.find_all('dd')
+                    for dd in dd_tags:
+                        a_tag = dd.find('a', href=True)
+                        if a_tag:
+                            href = a_tag.get('href', '')
+                            # 精准匹配：以.html结尾 且 包含blog- 且 不是空链接
+                            if href.endswith('.html') and 'blog-' in href and href.strip() != '':
+                                if href not in blog_links:
+                                    blog_links.append(href)
+                                    self.shock_logger.debug(f"找到博客链接: {href}")
+
+                # 去重并统计
                 blog_links = list(set(blog_links))
                 self.shock_logger.info(f"第{page}页找到 {len(blog_links)} 个有效博客链接")
                 
@@ -419,19 +399,19 @@ class Gamemale:
                     page += 1
                     continue
 
-                # 遍历博客链接
+                # 遍历每个博客链接
                 for link in blog_links:
                     if shock_count >= target_count:
                         break
 
                     try:
-                        # 访问博客详情页
+                        # 拼接完整URL并访问博客详情页
                         blog_detail_url = urljoin(f"https://{self.hostname}", link)
-                        self.shock_logger.debug(f"访问博客: {blog_detail_url}")
+                        self.shock_logger.debug(f"访问博客详情页: {blog_detail_url}")
                         blog_resp = self.session.get(blog_detail_url, timeout=10)
                         
                         if blog_resp.status_code != 200:
-                            self.shock_logger.debug("博客访问失败，跳过")
+                            self.shock_logger.debug(f"博客访问失败，状态码: {blog_resp.status_code}，跳过")
                             continue
 
                         # 第一步：找到ajaxmenus表情菜单链接
@@ -440,22 +420,22 @@ class Gamemale:
                             self.shock_logger.debug("未找到表情菜单链接，跳过")
                             continue
                         
+                        # 构造菜单URL并添加formhash
                         menu_url = urljoin(f"https://{self.hostname}", menu_match.group(1))
-                        # 添加formhash参数
                         if 'formhash=' not in menu_url:
                             menu_url += f"&formhash={self.post_formhash}"
                         
                         self.shock_logger.debug(f"请求表情菜单: {menu_url}")
                         menu_resp = self.session.get(menu_url, timeout=10)
 
-                        # 第二步：从菜单中找到"震惊"表情的提交链接
+                        # 第二步：从菜单响应中找到"震惊"表情链接
                         shock_match = re.search(r'href="([^"]*handlekey=shock[^"]*)"', menu_resp.text)
                         if not shock_match:
                             self.shock_logger.debug("未找到震惊表情链接，跳过")
                             continue
                         
+                        # 构造震惊URL并添加formhash
                         shock_url = urljoin(f"https://{self.hostname}", shock_match.group(1))
-                        # 添加formhash参数
                         if 'formhash=' not in shock_url:
                             shock_url += f"&formhash={self.post_formhash}"
 
@@ -465,13 +445,16 @@ class Gamemale:
 
                         # 验证是否成功
                         shock_text = shock_resp.text
-                        if "succeed" in shock_text or "操作成功" in shock_text or "messagetext" not in shock_text:
+                        success_keywords = ["succeed", "操作成功", "恭喜"]
+                        fail_keywords = ["messagetext", "错误", "已"]
+                        
+                        if any(kw in shock_text for kw in success_keywords) or not any(kw in shock_text for kw in fail_keywords):
                             shock_count += 1
-                            self.shock_logger.info(f"成功震惊 {shock_count}/{target_count} 次")
-                            # 延迟避免风控
+                            self.shock_logger.info(f"✅ 成功震惊 {shock_count}/{target_count} 次")
+                            # 增加延迟避免风控
                             time.sleep(1.5)
                         else:
-                            self.shock_logger.debug("该博客已震惊过或操作失败")
+                            self.shock_logger.debug("❌ 该博客已震惊过或操作失败")
 
                     except Exception as e:
                         self.shock_logger.warning(f"处理博客失败: {str(e)[:80]}")
@@ -501,7 +484,7 @@ class Gamemale:
         # 登录
         login_success = self.login()
         if not login_success:
-            self.main_logger.error("登录失败，终止所有操作")
+            self.main_logger.error("❌ 登录失败，终止所有操作")
             return
         
         # 执行签到
